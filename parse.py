@@ -2,41 +2,78 @@
 
 import fileinput
 import fire
+import sh
+import tqdm
 
-def parse_ctrl_list():
-    for line in fileinput.input("-"):
-        if " in Slot " not in line:
+def do_all(host="ceph01-ti.msk.inn.ru"):
+    for disk in tqdm.tqdm(list(list_disks(host))):
+        yield parse_smart_disk(host, disk)
+
+def list_disks(host="ceph01-ti.msk.inn.ru"):
+    out = sh.ssh(host, "ls -1 /dev/sd*")
+    for disk in out.splitlines():
+        if '0' <= disk[-1] <= '9':
             continue
-        (model, rest_line) = line.split(" in Slot ", 2)
-        slot = rest_line.split()[0]
-        print(slot, model)
+        yield disk
 
-def parse_disk_list():
+def parse_smart_disk(host="ceph01-ti.msk.inn.ru", disk="/dev/sda"):
+    try:
+        out = sh.ssh(host, "sudo smartctl -i "+disk)
+        return parse_smartctl(out)
+    except:
+        return {}
+
+def parse_smartctl(data):
     result = dict()
-    pd = None
-    fields = set(("Size", "Disk Name", "Model", "Serial Number"))
-    for line in fileinput.input("-"):
-        line = line.strip()
-        if "physicaldrive" in line:
-            (_, pd) = line.split()
-            result[pd] = dict()
+    map_headers = { "Vendor": "Vendor",
+                    "Product": "Model",
+                    "Device Model": "Model",
+                    "Serial Number": "Serial",
+                    "Serial number": "Serial",
+                    "User Capacity": "Size",
+                    "Rotation Rate": "Rotation Rate" }
+    headers = set(map_headers.keys())
+
+    for line in data.splitlines():
+        if ":" not in line:
             continue
-        if ":" in line:
+        key, value = line.split(":", 1)
+        key = key.lstrip()
+        if key in headers:
+            # print(key)
+            result[map_headers[key]] = value.strip()
+
+    if "Vendor" in result:
+        result["Model"] = result.pop("Vendor") + " " + result["Model"]
+
+    if "Size" in result:
+        size = result["Size"]
+        # match = re.search(r"\[([^\]]+)]", size)
+        # if match:
+            # result["Size"] = match.group(1)
+
+        result["Size"] = size[size.find("[")+1:size.find("]")]
+
+    return result
+
+def parse_hdparm(host="ceph01-ti.msk.inn.ru", diskname="/dev/sda"):
+    out = sh.ssh(host, "sudo hdparm -I "+diskname)
+    result = dict()
+    result[diskname] = dict()
+    pd = None
+    fields = set(("Model Number", "Serial Number", "device size with M = 1000*1000"))
+    rename_keys = {"device size with M = 1000*1000": "Size"}
+
+    for line in out.splitlines():
+        line = line.strip()
+        if ": " in line:
             (key, value) = line.split(": ")
             if key not in fields:
                 continue
-            result[pd][key] = value
+            result[diskname][rename_keys.get(key, key)] = value.strip()
             # print(">", key, "<>", value, "<")
 
-    result_by_name = dict()
-    for (location, data) in result.items():
-        print(data)
-        name = data['Disk Name']
-        data["Location"] = location
-        data.pop('Disk Name')
-        result_by_name[name] = data
-
-    return result_by_name
+    return result
 
 def main():
     # parse_ctrl_list()
