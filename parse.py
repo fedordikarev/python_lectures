@@ -2,20 +2,31 @@
 
 import fileinput
 import fire
+import sh
 
-def parse_ctrl_list():
-    for line in fileinput.input("-"):
+def do_all(host="ceph01-ti.msk.inn.ru"):
+    for slot in parse_ctrl_list(host):
+        print(parse_disk_list(host, slot))
+
+def parse_ctrl_list(host="ceph01-ti.msk.inn.ru"):
+    out = sh.ssh(host, "sudo hpssacli ctrl all show")
+    result = dict()
+    for line in out.splitlines():
         if " in Slot " not in line:
             continue
         (model, rest_line) = line.split(" in Slot ", 2)
         slot = rest_line.split()[0]
-        print(slot, model)
+        result[slot] = model
+        # print(slot, model)
 
-def parse_disk_list():
+    return result
+
+def parse_disk_list(host="ceph01-ti.msk.inn.ru", slot=0):
+    out = sh.ssh(host, "sudo hpssacli ctrl slot={} pd all show detail".format(slot))
     result = dict()
     pd = None
     fields = set(("Size", "Disk Name", "Model", "Serial Number"))
-    for line in fileinput.input("-"):
+    for line in out.splitlines():
         line = line.strip()
         if "physicaldrive" in line:
             (_, pd) = line.split()
