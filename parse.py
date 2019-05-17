@@ -5,49 +5,34 @@ import fire
 import sh
 
 def do_all(host="ceph01-ti.msk.inn.ru"):
-    for slot in parse_ctrl_list(host):
-        print(parse_disk_list(host, slot))
+    for disk in list_disks(host):
+        print(parse_hdparm(host, disk))
 
-def parse_ctrl_list(host="ceph01-ti.msk.inn.ru"):
-    out = sh.ssh(host, "sudo hpssacli ctrl all show")
-    result = dict()
-    for line in out.splitlines():
-        if " in Slot " not in line:
+def list_disks(host="ceph01-ti.msk.inn.ru"):
+    out = sh.ssh(host, "ls -1 /dev/sd*")
+    for disk in out.splitlines():
+        if '0' <= disk[-1] <= '9':
             continue
-        (model, rest_line) = line.split(" in Slot ", 2)
-        slot = rest_line.split()[0]
-        result[slot] = model
-        # print(slot, model)
+        yield disk
 
-    return result
-
-def parse_disk_list(host="ceph01-ti.msk.inn.ru", slot=0):
-    out = sh.ssh(host, "sudo hpssacli ctrl slot={} pd all show detail".format(slot))
+def parse_hdparm(host="ceph01-ti.msk.inn.ru", diskname="/dev/sda"):
+    out = sh.ssh(host, "sudo hdparm -I "+diskname)
     result = dict()
+    result[diskname] = dict()
     pd = None
-    fields = set(("Size", "Disk Name", "Model", "Serial Number"))
+    fields = set(("Model Number", "Serial Number", "device size with M = 1000*1000"))
+    rename_keys = {"device size with M = 1000*1000": "Size"}
+
     for line in out.splitlines():
         line = line.strip()
-        if "physicaldrive" in line:
-            (_, pd) = line.split()
-            result[pd] = dict()
-            continue
-        if ":" in line:
+        if ": " in line:
             (key, value) = line.split(": ")
             if key not in fields:
                 continue
-            result[pd][key] = value
+            result[diskname][rename_keys.get(key, key)] = value.strip()
             # print(">", key, "<>", value, "<")
 
-    result_by_name = dict()
-    for (location, data) in result.items():
-        print(data)
-        name = data['Disk Name']
-        data["Location"] = location
-        data.pop('Disk Name')
-        result_by_name[name] = data
-
-    return result_by_name
+    return result
 
 def main():
     # parse_ctrl_list()
